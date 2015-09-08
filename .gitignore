@@ -1,0 +1,9 @@
+.stack-work
+*.hi
+*.o
+*/build/*
+.hsenv
+dist
+.cabal-sandbox
+cabal.sandbox.config
+.idea
