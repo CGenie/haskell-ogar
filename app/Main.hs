@@ -2,7 +2,7 @@ module Main where
 
 import qualified Lib.Client as Client
 
-import Control.Concurrent (forkIO, threadDelay)
+import Control.Concurrent (forkIO, threadDelay, newEmptyMVar, newMVar, putMVar, swapMVar)
 import Control.Monad (forever, unless)
 import Control.Monad.Trans (liftIO)
 
@@ -18,21 +18,35 @@ import qualified Data.ByteString.Char8 as BSC
 import qualified Data.ByteString.Lazy as BSL
 
 
+loop = do
+    threadDelay 1000
+    loop
+
+
+updateWorldStateMVar mvar (Client.WorldUpdate worldState) = do
+    swapMVar mvar worldState
+    return ()
+updateWorldStateMVar mvar _ = return ()
+
+
 app :: WS.ClientApp ()
 app conn = do
     putStrLn "Connected!"
 
-    msg_ <- WS.receiveData conn
-    let msg = Client.read_message msg_
-    print $ show msg
-    withFile "/home/przemek/haskell-ogar-out" WriteMode $ \fh -> do
-        BS.hPutStr fh msg_
+    worldState <- newMVar $ Client.WorldState {}
 
-    msg_ <- WS.receiveData conn
-    let msg = Client.read_message msg_
-    print $ show msg
+    -- thread that constantly reads messages from server
+    _ <- forkIO $ forever $ do
+        msg_ <- WS.receiveData conn
+        let msg = Client.read_message msg_
+        liftIO $ updateWorldStateMVar worldState msg
+        liftIO $ print $ show msg
 
-    return ()
+    --msg_ <- WS.receiveData conn
+    --let msg = Client.read_message msg_
+    --print $ show msg
+
+    loop
 
     --let nickMsg = Client.nick_msg "my nick"
 
