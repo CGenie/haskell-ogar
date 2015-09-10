@@ -6,13 +6,14 @@ import Control.Monad (replicateM, Monad(..))
 import Control.Monad.Loops (untilM)
 
 import qualified Data.Binary.Get as DB
+import qualified Data.Binary.Put as DBP
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BSC
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.List.Split as L
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
-import Data.Word (Word8)
+import Data.Word (Word8, Word16, Word32)
 
 import System.IO
 
@@ -44,6 +45,7 @@ wordsToIntLE = wordsToInt . reverse
 
 type PlayerId = Int
 type PlayerName = T.Text
+type BlobId = Int
 
 
 data Eat = Eat {
@@ -82,6 +84,13 @@ data WorldState = WorldState {
     }
     deriving (Show)
 
+defaultWorldState = WorldState {
+    cnt_eats = 0
+  , eats = []
+  , players = []
+  , cnt_nodes_to_remove = 0
+}
+
 
 data Leaderboard = Leaderboard {
         player_leaderboard_data :: [LeaderboardPlayer]
@@ -89,24 +98,35 @@ data Leaderboard = Leaderboard {
     deriving (Show)
 
 
-data Message = WorldUpdate WorldState | FFALeaderboard Leaderboard
+data Message = WorldUpdate WorldState | FFALeaderboard Leaderboard | OwnsBlob BlobId
     deriving (Show)
 
+
+-- Client -> Server messages
+connection_start_msg :: BS.ByteString
+connection_start_msg = BS.pack [255, 0]
 
 nick_msg :: String -> BS.ByteString
 nick_msg nick = zippedNick
     where
         byteNick = BSC.pack nick
         zero = BS.singleton 0
-        --zippedNick = BS.foldl' (\acc char -> BS.append acc (BS.pack [0, char])) zero byteNick
         zippedNick = BS.append zero (T.encodeUtf16LE $ T.pack nick)
 
-connection_start_msg :: BS.ByteString
-connection_start_msg = BS.pack [255, 0]
+set_direction_msg :: Int -> Int -> BlobId -> BS.ByteString
+set_direction_msg x y blobId = BSL.toStrict $ DBP.runPut $ do
+    DBP.putWord8 16
+    DBP.putWord16le (fromIntegral(x) :: Word16)
+    DBP.putWord16le (fromIntegral(y) :: Word16)
+    DBP.putWord32le (fromIntegral(blobId) :: Word32)
+    DBP.putWord32le 0
 
+
+-- Server -> Client messages
 read_message :: BS.ByteString -> Message
 read_message bs
     | BS.head bs == 16    = WorldUpdate (readWorldState $ BS.tail bs)
+    | BS.head bs == 32    = OwnsBlob (readBlobId $ BS.tail bs)
     | BS.head bs == 49    = FFALeaderboard (readFFALeaderboard $ BS.tail bs)
     | otherwise           = error $ "Unknown opcode " ++ (show $ BS.head bs)
 
@@ -131,6 +151,9 @@ readFFALeaderboard bs = Leaderboard {
     where
         players = DB.runGet readFFALeaderboardDeserializer $ BSL.fromStrict bs
 
+
+readBlobId :: BS.ByteString -> BlobId
+readBlobId bs = DB.runGet readBlobIdDeserializer $ BSL.fromStrict bs
 
 
 -- DESERIALIZERS
@@ -212,3 +235,9 @@ readFFALeaderboardPlayers n = do
             leaderboard_player_id = wordToInt(leaderboard_player_id)
           , leaderboard_name = leaderboard_name
         }:rest)
+
+
+readBlobIdDeserializer :: DB.Get BlobId
+readBlobIdDeserializer = do
+    blob_id <- DB.getWord32le
+    return $ wordToInt blob_id
