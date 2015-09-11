@@ -18,16 +18,12 @@ import qualified Data.ByteString.Char8 as BSC
 import qualified Data.ByteString.Lazy as BSL
 
 
-loop = forever $ threadDelay (1000 * 1000)
-
-
-updateWorldStateMVar worldStateMVar playerBlobsMVar (Client.WorldUpdate worldState) = do
+updateWorldStateMVar worldStateMVar playerBlobMVar (Client.WorldUpdate worldState) = do
     swapMVar worldStateMVar worldState
-    --print $ show worldState
     return ()
-updateWorldStateMVar worldStateMVar playerBlobsMVar (Client.OwnsBlob blobId) = do
+updateWorldStateMVar worldStateMVar playerBlobMVar (Client.OwnsBlob blobId) = do
     print $ "Player blob id " ++ (show blobId)
-    swapMVar playerBlobsMVar [blobId]
+    putMVar playerBlobMVar blobId
     return ()
 updateWorldStateMVar _ _ _ = return ()
 
@@ -38,30 +34,30 @@ updateLeaderboardMVar leaderboardMVar (Client.FFALeaderboard leaderboard) = do
 updateLeaderboardMVar _ _ = return ()
 
 
-getPlayerBlobData worldStateMVar playerBlobsMVar = do
+setPlayerBlobData mainPlayerMVar worldStateMVar playerBlobMVar = do
     ws <- readMVar worldStateMVar
-    pbs <- readMVar playerBlobsMVar
+    pb <- readMVar playerBlobMVar
 
-    if length pbs == 0
-        then return Nothing
+    let players = filter (\p -> (==) (Client.player_id p) pb) (Client.players ws)
+
+    if length players == 0
+        then do
+            print "Player is dead!"
         else do
-            let pb = pbs !! 0
+            putMVar mainPlayerMVar (players !! 0)
 
-            let players = filter (\p -> (==) (Client.player_id p) pb) (Client.players ws)
-
-            if length players == 0
-                then do
-                    print "Player is dead!"
-                    return Nothing
-                else return $ Just $ players !! 0
-
-sendPlayerDirection conn Nothing x y = return ()
-sendPlayerDirection conn (Just player) x y = do
+sendPlayerDirection conn player x y = do
     let msg = Client.set_direction_msg x y (Client.player_id player)
     print $ "Sending direction" ++ (show msg)
     withFile "/home/przemek/haskell-ogar-out" WriteMode $ \fh ->
         BSC.hPutStr fh msg
     WS.sendBinaryData conn msg
+
+
+operatePlayer conn mainPlayerMVar worldStateMVar = do
+    player <- readMVar mainPlayerMVar
+    print $ "Player: " ++ (show player)
+    sendPlayerDirection conn player 0 0
 
 
 app :: WS.ClientApp ()
@@ -71,7 +67,8 @@ app conn = do
     let nickMsg = Client.nick_msg "mynick"
     WS.sendTextData conn nickMsg
 
-    playerBlobs <- newMVar ([] :: [Client.BlobId])
+    playerBlob <- newEmptyMVar
+    mainPlayer <- newEmptyMVar
     leaderboard <- newMVar $ Client.Leaderboard {}
     worldState <- newMVar $ Client.defaultWorldState
 
@@ -79,18 +76,22 @@ app conn = do
     _ <- forkIO $ forever $ do
         msg_ <- WS.receiveData conn
         let msg = Client.read_message msg_
-        liftIO $ updateWorldStateMVar worldState playerBlobs msg
+        liftIO $ updateWorldStateMVar worldState playerBlob msg
         liftIO $ updateLeaderboardMVar leaderboard msg
         --liftIO $ print $ show msg
 
     -- thread that tracks player's data
     _ <- forkIO $ forever $ do
-        player <- liftIO $ getPlayerBlobData worldState playerBlobs
-        print $ "Player: " ++ (show player)
-        sendPlayerDirection conn player 0 0
-        threadDelay (1000 * 1000)
+        setPlayerBlobData mainPlayer worldState playerBlob
+        threadDelay (100 * 1000)
 
-    loop
+    -- thread that operates mainPlayer according to worldState
+    _ <- forkIO $ forever $ do
+        operatePlayer conn mainPlayer worldState
+        threadDelay (100 * 1000)
+
+    forever $ threadDelay (1000 * 1000)
+
 
 main :: IO ()
 main = do
