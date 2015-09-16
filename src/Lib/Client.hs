@@ -116,10 +116,10 @@ nick_msg nick = zippedNick
 set_direction_msg :: Int -> Int -> BlobId -> BS.ByteString
 set_direction_msg x y blobId = BSL.toStrict $ DBP.runPut $ do
     DBP.putWord8 16
-    DBP.putWord16le (fromIntegral(x) :: Word16)
-    DBP.putWord16le (fromIntegral(y) :: Word16)
+    DBP.putWord32le (fromIntegral(x) :: Word32)
+    DBP.putWord32le (fromIntegral(y) :: Word32)
     DBP.putWord32le (fromIntegral(blobId) :: Word32)
-    DBP.putWord32le 0  -- TODO: Undocumented, but required by Ogar (message size must be 13) ?
+    --DBP.putWord32le 0  -- TODO: Undocumented, but required by Ogar (message size must be 13) ?
 
 
 -- Server -> Client messages
